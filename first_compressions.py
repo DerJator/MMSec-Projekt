@@ -24,7 +24,7 @@ def compress_latent(img: np.ndarray, model: CompressionModel, device: torch.devi
     model = model.to(device)
 
     y = model.g_a(padded_img)  # latent space direkt nach Encoder
-    y_hat = model.gaussian_conditional.quantize(y, mode="dequantize") # latent space nach Quantisierung
+    y_hat = model.gaussian_conditional.quantize(y, mode="dequantize")  # latent space nach Quantisierung
 
     if detach:
         y_hat = y_hat.squeeze(0).detach().cpu().numpy().copy()
@@ -110,6 +110,7 @@ def assess_manipulated_images(original_imgs: list[str], manipulated_imgs: list[s
         mean_mse_channel = assess_mse(error_tensor, file)
 
         # Plot the dimensions which have the highest MSE across images
+        versus_plot(original_img, test_img, main_title=f"Pixel Domain")
         for dim in plot_dims:
             versus_plot(y_hat[dim], y_hat_f[dim], main_title=f"Channel {dim}")
 
@@ -147,10 +148,10 @@ def plot_max_mse_channels(max_mse_channels: np.ndarray, n_channels: int = 20):
 if __name__ == "__main__":
     test_img_path = "./images/wallpaper.jpg"
     work_dir = "./images/own_manipulations_COCO/edited_images/"
-    original_path = "./images/own_manipulations_COCO/sheep/"
+    orig_path = "./images/own_manipulations_COCO/sheep/"
     fraud_img_files = os.listdir(work_dir)
     test_img_paths = [work_dir + s for s in fraud_img_files if s.endswith(".jpg")]
-    original_img_paths = [original_path + s for s in fraud_img_files if s.endswith(".jpg")]
+    original_img_paths = [orig_path + s for s in fraud_img_files if s.endswith(".jpg")]
     cheng_model = cai.zoo.cheng2020_anchor(6, pretrained=True)
     cheng_model.update()
 
