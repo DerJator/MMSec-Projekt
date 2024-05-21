@@ -11,7 +11,7 @@ import regex as re
 
 def compress_latent(img: np.ndarray, model: CompressionModel, device: torch.device, detach: bool = True):
     """
-    model: CompressionModel
+    Takes image and returns its latent representation and quantized latent representation
     """
     img = img_to_torch(img)
 
@@ -86,7 +86,7 @@ def assess_mse(error_tensor: np.ndarray, name: str = ""):
 
 def assess_manipulated_images(original_imgs: list[str], manipulated_imgs: list[str],
                               model: CompressionModel, plot_dims: list[int], n_assess_dims: int = 20,
-                              device: torch.device = "cpu"):
+                              quantize: bool = False, device: torch.device = "cpu"):
     """
     For every pair of original and manipulated image, compress using given model and compare
     MSE between channels of compression. For every image, collect the 20 channel indices of max MSE and return
@@ -106,7 +106,11 @@ def assess_manipulated_images(original_imgs: list[str], manipulated_imgs: list[s
         y, y_hat = compress_latent(original, model, device=device)
 
         # Calculate MSE between latent channels
-        error_tensor = np.square(y_hat - y_hat_f)
+        if quantize:
+            error_tensor = np.square(y_hat - y_hat_f)
+        else:
+            error_tensor = np.square((y - y_f).squeeze(0).detach().numpy())
+
         mean_mse_channel = assess_mse(error_tensor, file)
 
         # Plot the dimensions which have the highest MSE across images
@@ -146,9 +150,9 @@ def plot_max_mse_channels(max_mse_channels: np.ndarray, n_channels: int = 20):
 
 
 if __name__ == "__main__":
-    test_img_path = "./images/wallpaper.jpg"
-    work_dir = "./images/own_manipulations_COCO/edited_images/"
-    orig_path = "./images/own_manipulations_COCO/sheep/"
+    test_img_path = "../images/wallpaper.jpg"
+    work_dir = "../images/own_manipulations_COCO/edited_images/"
+    orig_path = "../images/own_manipulations_COCO/sheep/"
     fraud_img_files = os.listdir(work_dir)
     test_img_paths = [work_dir + s for s in fraud_img_files if s.endswith(".jpg")]
     original_img_paths = [orig_path + s for s in fraud_img_files if s.endswith(".jpg")]
