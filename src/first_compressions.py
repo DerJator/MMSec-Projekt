@@ -7,6 +7,35 @@ from compressai.ops import compute_padding
 from compressai.models import CompressionModel
 import os
 import regex as re
+from enum import Enum
+
+
+class CModelName(Enum):
+    CHENG2020 = 0
+
+
+class Compressor:
+    def __init__(self, model_name: CModelName, device: torch.device):
+        if model_name == CModelName.CHENG2020:
+            self.model = cheng2020_model()
+        else:
+            raise RuntimeError(f"Unknown model name: {model_name}")
+
+        self.device = device
+        if device == torch.device("cpu"):
+            self.detach = True
+        else:
+            self.detach = False
+
+    def compress(self, img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return compress_latent(img, self.model, self.device, self.detach)
+
+
+def cheng2020_model(quality: int = 6):
+    model = cai.zoo.cheng2020_anchor(quality, pretrained=True)
+    model.update()
+
+    return model
 
 
 def compress_latent(img: np.ndarray, model: CompressionModel, device: torch.device, detach: bool = True):
@@ -65,6 +94,9 @@ def versus_plot(img1: np.ndarray, img2: np.ndarray, main_title: str,
 
 
 def assess_mse(error_tensor: np.ndarray, name: str = ""):
+    """
+    Plots mean error over all channels of the image and MSE per channel as a bar plot
+    """
     # Mean latent representation MSE over all channels
     plt.figure(figsize=(10, 5))
     plt.subplot(1, 2, 1)
@@ -81,24 +113,33 @@ def assess_mse(error_tensor: np.ndarray, name: str = ""):
     plt.bar(np.arange(mean_mse_channel.shape[0]), mean_mse_channel)
     plt.show()
 
-    return mean_mse_channel
 
-
-def assess_manipulated_images(original_imgs: list[str], manipulated_imgs: list[str],
-                              model: CompressionModel, plot_dims: list[int], n_assess_dims: int = 20,
+def assess_manipulated_images(img_pairs: list[tuple],
+                              model: CompressionModel, plot_dims: list[int] = None, n_assess_dims: int = 20,
                               quantize: bool = False, device: torch.device = "cpu"):
     """
     For every pair of original and manipulated image, compress using given model and compare
     MSE between channels of compression. For every image, collect the 20 channel indices of max MSE and return
     this result as an array shape(n_imgs, n_assess_dims)
     """
-    most_changed_channels = np.zeros((len(manipulated_imgs), n_assess_dims))
+    most_changed_channels = np.zeros((len(img_pairs), n_assess_dims))
+    mse_tensor = np.zeros((n_assess_dims, len(img_pairs)))
 
-    for i, (original_path, manip_path) in enumerate(zip(original_imgs, manipulated_imgs)):
+    for i, (original_path, manip_path) in enumerate(img_pairs):
         test_img = plt.imread(manip_path)
         original_img = plt.imread(original_path)
-        test = test_img / 255.
-        original = original_img / 255.
+
+        # Flip img if necessary
+        if test_img.shape[0] == original_img.shape[1] and test_img.shape[1] == original_img.shape[0]:
+            test_img = test_img.transpose(1, 0, 2)
+
+        if test_img.shape != original_img.shape:
+            print(manip_path, original_path)
+            mse_tensor[:, i] = None
+            continue
+
+        test = test_img / np.max(test_img)
+        original = original_img / np.max(original_img)
 
         file = re.search(r"/([^/]+)$", original_path).group(1)
 
@@ -111,42 +152,57 @@ def assess_manipulated_images(original_imgs: list[str], manipulated_imgs: list[s
         else:
             error_tensor = np.square((y - y_f).squeeze(0).detach().numpy())
 
-        mean_mse_channel = assess_mse(error_tensor, file)
+        if plot_dims is not None:
+            assess_mse(error_tensor, file)
+        mean_mse_channel = np.mean(error_tensor, axis=(1, 2))  # One MSE value per channel
+        mse_tensor[:, i] = mean_mse_channel
 
         # Plot the dimensions which have the highest MSE across images
-        versus_plot(original_img, test_img, main_title=f"Pixel Domain")
-        for dim in plot_dims:
-            versus_plot(y_hat[dim], y_hat_f[dim], main_title=f"Channel {dim}")
+        if plot_dims is not None:
+            versus_plot(original_img, test_img, main_title=f"Pixel Domain")
+            for dim in plot_dims:
+                versus_plot(y_hat[dim], y_hat_f[dim], main_title=f"Channel {dim}")
 
         """ Plot mean MSE over all channels + Histogram of MSE over channels """
 
         most_changed_channels[i, :] = np.argsort(mean_mse_channel)[-n_assess_dims:][::-1]
 
-    return most_changed_channels
+    return mse_tensor, most_changed_channels
 
 
-def plot_max_mse_channels(max_mse_channels: np.ndarray, n_channels: int = 20):
+def plot_max_mse_channels(max_mse_channels: np.ndarray, n_channels: int = 20,
+                          top_threshold: float = 0.8, plot_title: str = "MSE Analysis of Latent Channels"):
     # Compute histogram
     sample_size = max_mse_channels.shape[0]
+    # Make to list of channel ics, plot as bar plot
     unique_values, counts = np.unique(max_mse_channels.flatten(), return_counts=True)
 
-    plt.figure(figsize=(10, 5))
-    plt.subplot(1, 2, 1)
+    plt.figure(figsize=(15, 5))
+    plt.subplots_adjust(hspace=1, top=0.8)
+    plt.subplot(3, 1, 1)
     plt.bar(unique_values, counts, align='center', width=0.5)  # Set width=0.5 for each bar
     plt.xlabel('Channel')
+    plt.xticks(rotation=90, fontsize=8)
     plt.ylabel(f'Frequency in Top {n_channels}')
-    plt.title(f"Occurence of a channel in the top {n_channels} regarding max MSE\nSample size: {sample_size}")
+    plt.title(f"Times of occurences of a channel in the Top {n_channels} regarding max MSE\nOver {sample_size} samples")
     plt.xticks(unique_values)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # Plot histogram over Frequency of occurence
-    plt.subplot(1, 2, 2)
-    plt.hist(counts)
+    plt.subplot(3, 1, 2)
+    plt.hist(counts, bins=[10*i for i in range(sample_size//10 + 1)])
     plt.title(f"Counts of occurence in Top {n_channels}")
 
+    # Plot histogram over Frequency of occurence, bins are 5% Marker
+    plt.subplot(3, 1, 3)
+    plt.hist(counts, bins=20)
+    plt.title(f"Counts of occurence in Top {n_channels} in 5% bins")
+
+
+    plt.suptitle(plot_title, y=0.98)
     plt.show()
-    top_channels = unique_values[np.where(counts == sample_size)]  # Add a bit of tolerance
-    print(f"The top channels regarding max MSE are: {top_channels})")
+    top_channels = unique_values[np.where(counts >= top_threshold * sample_size)]  # Add a bit of tolerance
+    print(f"The top channels regarding max MSE (In Top{n_channels} channels for >{top_threshold * 100}% of {sample_size} samples) are: \n{top_channels})")
 
 
 if __name__ == "__main__":
