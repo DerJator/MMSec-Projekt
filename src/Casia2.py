@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import time
 from first_compressions import *
 from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import train_test_split
 
 """
 CASIA v2.0 data set contains 7465 authentic images, 5123 manipulated images 
@@ -27,12 +28,13 @@ N_AU_STD = 6427
 
 class Casia2Dataset(Dataset):
     """ Dataset for CASIA v2.0 Dataset, separated in tampered and associated authentic base image """
-    def __init__(self, base_dir, channels, transform=None):
+    def __init__(self, base_dir, channels, transform=None, seed=2811):
         self.base_dir = base_dir
         self.transform = transform
         self.auth_dir = Path(base_dir, "Au")
         self.tp_dir = Path(base_dir, "Tp")
         self.channels = channels
+        self.seed = seed
 
         # Find standard sized images, s.t. all images have same size 384 x ...
         # => Reduces dataset size to 1379 tampered images but allows uniform input for model
@@ -52,10 +54,17 @@ class Casia2Dataset(Dataset):
 
         # self.auth_by_cat, self.tp_paths_by_cat = self.paths_per_cat()
         self.output_pairs = None
+        self.labels = None
         self.organize_output_pairs(mode="neg")
 
         self.size = len(self.tp_imgs)
         print(f"{self.size=}")
+
+    def train_test_split(self, test):
+        train_pairs, test_pairs, train_labels, test_labels = (
+            train_test_split(self.output_pairs, self.labels, test_size=test, random_state=self.seed))
+
+        return train_pairs, test_pairs, train_labels, test_labels
 
     def paths_per_cat(self):
         """
@@ -132,7 +141,8 @@ class Casia2Dataset(Dataset):
         if mode == "neg":
             self.output_pairs = []
             for tp_img in self.tp_imgs:
-                self.output_pairs.append((tp_img, self.tp_src_imgs[tp_img], 1))
+                self.output_pairs.append((tp_img, self.tp_src_imgs[tp_img]))
+                self.labels.append(1)
 
         elif mode == "neg_pos":
             n_neg = len(self.tp_imgs)
@@ -140,11 +150,14 @@ class Casia2Dataset(Dataset):
             tp_constituents = random.sample(self.tp_imgs, k=2*n_neg)
 
             for i in range(2 * n_neg):
-                self.output_pairs.append((au_constituents[i], au_constituents[i+1], 0))  # Add Au-Au pair to output
-                self.output_pairs.append((tp_constituents[i], tp_constituents[i+1], 0))  # Add Tp-Tp pair to output
+                self.output_pairs.append((au_constituents[i], au_constituents[i+1]))  # Add Au-Au pair to output
+                self.labels.append(0)
+                self.output_pairs.append((tp_constituents[i], tp_constituents[i+1]))  # Add Tp-Tp pair to output
+                self.labels.append(0)
 
     def __getitem__(self, ix):
-        img1, img2, label = self.output_pairs[ix]
+        img1, img2 = self.output_pairs[ix]
+        label = self.labels[ix]
 
         img1 = plt.imread(img1)
         img2 = plt.imread(img2)
