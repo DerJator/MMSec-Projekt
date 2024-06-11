@@ -27,11 +27,12 @@ N_AU_STD = 6427
 
 class Casia2Dataset(Dataset):
     """ Dataset for CASIA v2.0 Dataset, separated in tampered and associated authentic base image """
-    def __init__(self, base_dir, transform=None):
+    def __init__(self, base_dir, channels, transform=None):
         self.base_dir = base_dir
         self.transform = transform
         self.auth_dir = Path(base_dir, "Au")
         self.tp_dir = Path(base_dir, "Tp")
+        self.channels = channels
 
         # Find standard sized images, s.t. all images have same size 384 x ...
         # => Reduces dataset size to 1379 tampered images but allows uniform input for model
@@ -47,8 +48,12 @@ class Casia2Dataset(Dataset):
             self.tp_imgs = [img_path[:-1] for img_path in file.readlines()]
 
         self.tp_src_imgs = self.find_src_imgs(self.tp_imgs)
+        self.mode = "neg"
 
         # self.auth_by_cat, self.tp_paths_by_cat = self.paths_per_cat()
+        self.output_pairs = None
+        self.organize_output_pairs(mode="neg")
+
         self.size = len(self.tp_imgs)
         print(f"{self.size=}")
 
@@ -119,16 +124,32 @@ class Casia2Dataset(Dataset):
             if img.shape[0] == 256 and img.shape[1] == 384:
                 return img.transpose(1, 0, 2)
 
+    def organize_output_pairs(self, mode="neg"):
+        """
+        Use the class variables to give a list of Au-Tp paris for each Tp image.
+        mode: 'neg' or 'pos'. 'neg' creates the pair list and adds Au-Tp, 'pos' uses the existing list and adds Au-Au and Tp-Tp
+        """
+        if mode == "neg":
+            self.output_pairs = []
+            for tp_img in self.tp_imgs:
+                self.output_pairs.append((tp_img, self.tp_src_imgs[tp_img], 1))
+
+        elif mode == "neg_pos":
+            n_neg = len(self.tp_imgs)
+            au_constituents = random.sample(self.auth_imgs, k=2*n_neg)
+            tp_constituents = random.sample(self.tp_imgs, k=2*n_neg)
+
+            for i in range(2 * n_neg):
+                self.output_pairs.append((au_constituents[i], au_constituents[i+1], 0))  # Add Au-Au pair to output
+                self.output_pairs.append((tp_constituents[i], tp_constituents[i+1], 0))  # Add Tp-Tp pair to output
+
     def __getitem__(self, ix):
-        img_path_tp = self.tp_imgs[ix]
-        img_path_auth = self.tp_src_imgs[img_path_tp]
-        # print(img_path_auth, img_path_tp)
+        img1, img2, label = self.output_pairs[ix]
 
-        img_au = plt.imread(img_path_auth)
-        img_tp = plt.imread(img_path_tp)
+        img1 = plt.imread(img1)
+        img2 = plt.imread(img2)
 
-        # return img_path_auth, img_path_tp
-        return img_au, img_tp
+        return img1[self.channels], img2[self.channels], label
 
     def __len__(self):
         return self.size
