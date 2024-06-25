@@ -84,7 +84,7 @@ def extract_cooccurrences(in_tensor: np.ndarray, channels: [int], T=3, Q=5) -> l
 
 
 if __name__ == '__main__':
-    test_img = np.random.rand(4, 64, 64) * 255
+    # test_img = np.random.rand(4, 64, 64) * 255
     cheng_model = cai.zoo.cheng2020_anchor(6, pretrained=True)
 
     for img_path in os.listdir(Casia2.CASIA_TP):

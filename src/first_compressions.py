@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from compressai.ops import compute_padding
 from compressai.models import CompressionModel
+from torch.utils.data import DataLoader, Dataset
 import os
 import regex as re
 from enum import Enum
@@ -13,6 +14,26 @@ from enum import Enum
 class CModelName(Enum):
     CHENG2020 = 0
 
+
+class CompressedDataset(Dataset):
+    def __init__(self, dataset, transform, quantized=False):
+        self.dataset = dataset
+        self.transform = transform
+        self.quantized = quantized
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        img1, img2, label = self.dataset[idx]
+        comp1 = self.transform(img1)
+        comp2 = self.transform(img2)
+
+        #
+        if not self.quantized:
+            return comp1[0], comp2[0], label
+        else:
+            return comp1[1], comp2[1], label
 
 class Compressor:
     def __init__(self, model_name: CModelName, device: torch.device):
@@ -27,8 +48,42 @@ class Compressor:
         else:
             self.detach = False
 
-    def compress(self, img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def compress_single(self, img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return compress_latent(img, self.model, self.device, self.detach)
+
+    def compress_torch(self, data: DataLoader) -> DataLoader:
+        transform = lambda img: self.compress_latent(img, self.model, self.device, detach=False)
+        transformed_dataset = CompressedDataset(data.dataset, transform)
+        transformed_dataloader = DataLoader(transformed_dataset, batch_size=data.batch_size, shuffle=False)
+        return transformed_dataloader
+
+    def compress_latent(self, img: np.ndarray | torch.Tensor, model: CompressionModel, device: torch.device, detach: bool = True):
+        """
+        Takes image and returns its latent representation and quantized latent representation
+        """
+        if type(img) is np.ndarray:
+            img = img_to_torch(img)
+        elif type(img) is torch.Tensor and len(img.size()) == 3:
+            img = img.unsqueeze(0)
+
+        h, w = img.shape[-2:]
+        pad, unpad = compute_padding(in_h=h, in_w=w, min_div=2 ** 6)
+
+        padded_img = F.pad(input=img, pad=pad, mode="constant", value=0)
+
+        padded_img = padded_img.to(device)
+        model = model.to(device)
+
+        y = model.g_a(padded_img)  # latent space direkt nach Encoder
+        y_hat = model.gaussian_conditional.quantize(y, mode="dequantize")  # latent space nach Quantisierung
+
+        if detach:
+            y_hat = y_hat.squeeze(0).detach().cpu().numpy().copy()
+        else:
+            y = y.squeeze(0)
+            y_hat = y_hat.squeeze(0)
+
+        return y, y_hat
 
 
 def cheng2020_model(quality: int = 6):

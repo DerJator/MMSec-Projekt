@@ -8,6 +8,7 @@ import time
 from first_compressions import *
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
+import pickle
 
 """
 CASIA v2.0 data set contains 7465 authentic images, 5123 manipulated images 
@@ -49,7 +50,17 @@ class Casia2Dataset(Dataset):
         with open(std_info_tp, 'r') as file:
             self.tp_imgs = [img_path[:-1] for img_path in file.readlines()]
 
-        self.tp_src_imgs = self.find_src_imgs(self.tp_imgs)
+        tp_au_pairs_file = Path(self.tp_dir, "tp-au-pairs.p")
+
+        if os.path.exists(tp_au_pairs_file):
+            with open(tp_au_pairs_file, 'rb') as file:
+                self.tp_src_imgs = pickle.load(file)
+        else:
+            self.tp_src_imgs = self.find_img_pairs()
+            with open(tp_au_pairs_file, "wb") as file:
+                pickle.dump(self.tp_src_imgs, file)
+
+        print(len(self.tp_src_imgs))
         self.mode = "neg"
 
         # self.auth_by_cat, self.tp_paths_by_cat = self.paths_per_cat()
@@ -80,20 +91,20 @@ class Casia2Dataset(Dataset):
             tp_by_cat = [img_name for img_name in self.tp_imgs if categ in img_name]
 
             # For all images of this category, get authentic source images
-            src_imgs = self.find_src_imgs(tp_by_cat)
+            src_imgs = self._find_src_imgs(tp_by_cat)
             tampered[categ].extend(tp_by_cat)
             authentic[categ].extend(src_imgs.values())
 
         return authentic, tampered
 
-    def find_src_imgs(self, tp_list):
+    def _find_src_imgs(self):
         """
         For a list of tampered image names which encode the source name of the authentic image they're based on,
         extract the category and id of the source image and fetch the corresponding image name from the list of
         authentic images.
         """
         src_files = {}
-        for tp_name in tp_list:
+        for tp_name in self.tp_imgs:
             match = re.search(r"([a-z]+)([0-9]+)(?=_[a-z])", tp_name)  # Get category of modified image
             categ = match.group(1)
             id = match.group(2)
@@ -123,15 +134,44 @@ class Casia2Dataset(Dataset):
 
                 if 384 in img.shape and 256 in img.shape:
                     txt.write(f"{img_path}\n")  # Write in standard_info file
-                    img = self.rotate_img(img)
+                    self.rotate_img(img, img_path)
                     if img is not None:
                         plt.imsave(img_path, img)  # Rotate and re-save for later loading
             txt.close()
 
-    def rotate_img(self, img: np.ndarray):
+    def find_img_pairs(self):
+        tp_src = {}
+
+        for tp_name in os.listdir(self.tp_dir):
+            if not tp_name.endswith(".jpg"):
+                continue
+
+            match = re.search(r"([a-z]+)([0-9]+)(?=_[a-z])", tp_name)  # Get category and id of modified image
+            categ = match.group(1)
+            id = match.group(2)
+
+            auth_src_id = categ + '_' + id  # Search authentic source image
+
+            for auth_name in os.listdir(self.auth_dir):
+                auth_path = Path(self.auth_dir, auth_name)
+                if not auth_src_id in auth_name:
+                    continue
+                if not auth_path in self.tp_src_imgs.values:
+                    continue
+
+                img = plt.imread()
+                self.rotate_img(img, path=Path(self.auth_dir, auth_name))
+
+                if 384 in img.shape and 256 in img.shape:
+                    tp_src[Path(self.tp_dir, tp_name).as_posix()] = Path(self.auth_dir, auth_name).as_posix()
+                break
+
+        return tp_src
+
+    def rotate_img(self, img: np.ndarray, path: Path):
         if 384 in img.shape and 256 in img.shape:
             if img.shape[0] == 256 and img.shape[1] == 384:
-                return img.transpose(1, 0, 2)
+                img = img.transpose(1, 0, 2)
 
     def organize_output_pairs(self, mode="neg"):
         """
@@ -140,20 +180,41 @@ class Casia2Dataset(Dataset):
         """
         if mode == "neg":
             self.output_pairs = []
-            for tp_img in self.tp_imgs:
-                self.output_pairs.append((tp_img, self.tp_src_imgs[tp_img]))
+            self.labels = []
+            for tp_path, auth_path in self.tp_src_imgs.items():
+                self.output_pairs.append((tp_path, auth_path))
                 self.labels.append(1)
 
         elif mode == "neg_pos":
-            n_neg = len(self.tp_imgs)
-            au_constituents = random.sample(self.auth_imgs, k=2*n_neg)
-            tp_constituents = random.sample(self.tp_imgs, k=2*n_neg)
+            if self.output_pairs is None or self.labels is None:
+                raise RuntimeError("Output lists need to be initialized by a call with mode='pos'")
 
-            for i in range(2 * n_neg):
-                self.output_pairs.append((au_constituents[i], au_constituents[i+1]))  # Add Au-Au pair to output
+            n_neg = len(self.tp_src_imgs)
+            au_au_pairs = self.generate_pairs(list(self.tp_src_imgs.values()), n_neg)
+            tp_tp_pairs = self.generate_pairs(list(self.tp_src_imgs.keys()), n_neg)
+
+            for i in range(n_neg):
+                self.output_pairs.append(au_au_pairs[i])  # Add Au-Au pair to output
                 self.labels.append(0)
-                self.output_pairs.append((tp_constituents[i], tp_constituents[i+1]))  # Add Tp-Tp pair to output
+                self.output_pairs.append(tp_tp_pairs[i])  # Add Tp-Tp pair to output
                 self.labels.append(0)
+
+    def generate_pairs(self, l, n):
+        pairs = []
+        i = 0
+        shuffled = l.copy()
+        random.shuffle(l)
+
+        while len(pairs) < n:
+            if l[i] != shuffled[i]:
+                pairs.append((l[i], shuffled[i]))
+            else:
+                random.shuffle(shuffled)
+                i = 0
+            i += 1
+
+        return pairs
+
 
     def __getitem__(self, ix):
         img1, img2 = self.output_pairs[ix]
