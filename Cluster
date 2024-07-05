@@ -1,0 +1,7 @@
+iwi1104h@cshpc.rrze.fau.de
+Access: tinyx.nhr.fau.de
+module load python/pytorch-1.13py3.10
+conda env export --name MultimediaSecurity --file MMSec-env.yaml
+rsync -avz /home/jo/Repositories/MMSec-Projekt/ csnhr.nhr.fau.de:MMF-Proj
+
+salloc.tinygpu --gres=gpu:1 --time=01:00:00 --> INTERACTIVE SESSION
