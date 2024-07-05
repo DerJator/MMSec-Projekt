@@ -5,9 +5,10 @@ from torchvision import transforms
 import Casia2
 import models
 import first_compressions as cmp
+import argparse
+import wandb
 
-
-def train_model(model, train_loader, criterion, optimizer, num_epochs=10, device=torch.device("cpu")):
+def train_model(model, train_loader, criterion, optimizer, num_epochs=10, device=torch.device("cpu"), log_interval=1):
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -24,6 +25,8 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=10, device
             running_loss += loss.item()
 
         epoch_loss = running_loss / len(train_loader)
+        if epoch % log_interval == 0:
+            run.log({"loss": epoch_loss})  # Max 1x pro epoch (bei mehreren Sachen z.B. dict füllen)
         print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}')
 
 
@@ -44,12 +47,26 @@ def evaluate_model(model, test_loader):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Process some paths.')
+
+    # Add arguments
+    parser.add_argument('--dataset-path', type=str, required=True, help='Path to the dataset')
+    parser.add_argument('--workdir', type=str, required=True, help='Working directory')
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Access the arguments
+    DATA_PATH = args.dataset_path
+    WORKDIR = args.workdir
+
     N_CHANNELS = 192
     DEVICE = torch.device("cuda")
-    DEVICE = torch.device("cpu")
+    # DEVICE = torch.device("cpu")
+
 
     # Initialize Dataset
-    casia_data = Casia2.Casia2Dataset(Casia2.CASIA_PATH, channels=[i for i in range(N_CHANNELS)])
+    casia_data = Casia2.Casia2Dataset(DATA_PATH, channels=[i for i in range(N_CHANNELS)])
     casia_data.organize_output_pairs(mode="neg_pos")  # Also add positive pairs
     # print(casia_data.output_pairs)
     train_pairs, test_pairs, train_labels, test_labels = casia_data.train_test_split(test=0.2)
@@ -70,9 +87,9 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_data, batch_size=32, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=32, shuffle=False)
 
-    for i1, i2, label in train_loader:
+    # for i1, i2, label in train_loader:
         # print(type(i1), type(i2), type(label))
-        break
+        # break
 
     train_cmp_loader = compressor.compress_torch(train_loader)
     test_cmp_loader = compressor.compress_torch(test_loader)
@@ -82,6 +99,14 @@ if __name__ == '__main__':
     model = models.SiameseNetwork(in_channels=N_CHANNELS).to(DEVICE)
     loss_fun = models.ContrastiveLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    # init wandb
+    run = wandb.init(project="Triplet1")
+    # save model inputs and model parameters
+    config = run.config
+    config.dropout = 0.01
+    # Log gradients
+    run.watch(model)
 
     """ TRAINING """
 
