@@ -34,6 +34,7 @@ class Casia2Dataset(Dataset):
         self.transform = transform
         self.auth_dir = Path(base_dir, "Au")
         self.tp_dir = Path(base_dir, "Tp")
+        print(f"{self.auth_dir=}\n{self.tp_dir=}")
         self.channels = channels
         self.seed = seed
 
@@ -51,15 +52,22 @@ class Casia2Dataset(Dataset):
             self.tp_imgs = [img_path[:-1] for img_path in file.readlines()]
 
         tp_au_pairs_file = Path(self.tp_dir, "tp-au-pairs.p")
+        print(f"pickle file: {tp_au_pairs_file}")
 
         if os.path.exists(tp_au_pairs_file):
+            print("read from existing pairing")
             with open(tp_au_pairs_file, 'rb') as file:
                 self.tp_src_imgs = pickle.load(file)
         else:
+            print("create new pairing")
             self.tp_src_imgs = self.find_img_pairs()
             with open(tp_au_pairs_file, "wb") as file:
                 pickle.dump(self.tp_src_imgs, file)
 
+        for i, item in enumerate(self.tp_src_imgs.items()):
+            print(f"{item=}")
+            if i == 3:
+                break
         print(len(self.tp_src_imgs))
         self.mode = "neg"
 
@@ -124,6 +132,7 @@ class Casia2Dataset(Dataset):
         """
         for dir in [self.auth_dir, self.tp_dir]:
             txt = open(Path(dir, "standard_sized"), "w")
+            print("s_s path:", Path(dir, "standard_sized"))
 
             # Annotate and flip images
             for img_name in os.listdir(dir):
@@ -140,7 +149,7 @@ class Casia2Dataset(Dataset):
             txt.close()
 
     def find_img_pairs(self):
-        tp_src = {}
+        tp_src = {}  # Keys: Tp-Path, Value: Corresponding Au-Path
 
         for tp_name in os.listdir(self.tp_dir):
             if not tp_name.endswith(".jpg"):
@@ -154,16 +163,16 @@ class Casia2Dataset(Dataset):
 
             for auth_name in os.listdir(self.auth_dir):
                 auth_path = Path(self.auth_dir, auth_name)
-                if not auth_src_id in auth_name:
+                if auth_src_id not in auth_name:
                     continue
-                if not auth_path in self.tp_src_imgs.values:
-                    continue
+                # if auth_path not in tp_src.values:
+                #     continue
 
-                img = plt.imread()
-                self.rotate_img(img, path=Path(self.auth_dir, auth_name))
+                img = plt.imread(auth_path)
+                self.rotate_img(img, path=auth_path)
 
                 if 384 in img.shape and 256 in img.shape:
-                    tp_src[Path(self.tp_dir, tp_name).as_posix()] = Path(self.auth_dir, auth_name).as_posix()
+                    tp_src[Path(self.tp_dir, tp_name).as_posix()] = auth_path.as_posix()
                 break
 
         return tp_src

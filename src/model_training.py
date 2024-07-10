@@ -13,10 +13,12 @@ def train_model(model, train_loader, criterion, optimizer, num_epochs=10, device
         model.train()
         running_loss = 0.0
         for img1, img2, label in train_loader:
-            print(img1[0].size(), img1[1].size(), label)
+            # print(img1[0].size(), img1[1].size(), label)
             img1, img2, label = img1.to(device), img2.to(device), label.to(device)
 
             optimizer.zero_grad()
+            torch.cuda.empty_cache()
+
             output1, output2 = model(img1, img2)
             loss = criterion(output1, output2, label)
             loss.backward()
@@ -59,6 +61,7 @@ if __name__ == '__main__':
     # Access the arguments
     DATA_PATH = args.dataset_path
     WORKDIR = args.workdir
+    print(f"{DATA_PATH=}\n{WORKDIR=}")
 
     N_CHANNELS = 192
     DEVICE = torch.device("cuda")
@@ -76,6 +79,8 @@ if __name__ == '__main__':
         # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    print(f"{len(train_pairs)=}")
+
     """ Put images through AI Coder """
     compressor = cmp.Compressor(cmp.CModelName.CHENG2020, device=DEVICE)
 
@@ -84,8 +89,8 @@ if __name__ == '__main__':
 
     # print(train_data.image_pairs[0])
 
-    train_loader = DataLoader(train_data, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_data, batch_size=32, shuffle=False)
+    train_loader = DataLoader(train_data, batch_size=16, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=16, shuffle=False)
 
     # for i1, i2, label in train_loader:
         # print(type(i1), type(i2), type(label))
@@ -110,7 +115,7 @@ if __name__ == '__main__':
 
     """ TRAINING """
 
-    train_model(model, train_cmp_loader, loss_fun, optimizer, device=DEVICE, num_epochs=10)
+    train_model(model, train_cmp_loader, loss_fun, optimizer, device=DEVICE, num_epochs=50)
 
     # Evaluate the model
     evaluate_model(model, test_cmp_loader)
