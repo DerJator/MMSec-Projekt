@@ -5,7 +5,7 @@
 #SBATCH --output=R-%x.%j.out
 #SBATCH --error=R-%x.%j.err
 #SBATCH --mail-type=end,fail
-#SBATCH --time=00:15:00
+#SBATCH --time=04:00:00
 #SBATCH --export=NONE
 unset SLURM_EXPORT_ENV
 
