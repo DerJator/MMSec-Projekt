@@ -192,7 +192,7 @@ class Casia2Dataset(Dataset):
             self.labels = []
             for tp_path, auth_path in self.tp_src_imgs.items():
                 self.output_pairs.append((tp_path, auth_path))
-                self.labels.append(1)
+                self.labels.append((1, 0))
 
         elif mode == "neg_pos":
             if self.output_pairs is None or self.labels is None:
@@ -204,9 +204,9 @@ class Casia2Dataset(Dataset):
 
             for i in range(n_neg):
                 self.output_pairs.append(au_au_pairs[i])  # Add Au-Au pair to output
-                self.labels.append(0)
+                self.labels.append((0, 0))
                 self.output_pairs.append(tp_tp_pairs[i])  # Add Tp-Tp pair to output
-                self.labels.append(0)
+                self.labels.append((1, 1))
 
     def generate_pairs(self, l, n):
         pairs = []
@@ -224,15 +224,14 @@ class Casia2Dataset(Dataset):
 
         return pairs
 
-
     def __getitem__(self, ix):
         img1, img2 = self.output_pairs[ix]
-        label = self.labels[ix]
+        labels = self.labels[ix]
 
         img1 = plt.imread(img1)
         img2 = plt.imread(img2)
 
-        return img1[self.channels], img2[self.channels], label
+        return img1[self.channels], img2[self.channels], labels
 
     def __len__(self):
         return self.size

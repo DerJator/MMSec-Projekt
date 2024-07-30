@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=MMF-Triplet
-#SBATCH --ntasks=1
+#SBATCH --ntasks=2
 #SBATCH --gres=gpu:1
 #SBATCH --output=R-%x.%j.out
 #SBATCH --error=R-%x.%j.err
@@ -29,7 +29,7 @@ cp -r ${SLURM_SUBMIT_DIR}/. .
 mkdir -p output/logs/
 mkdir -p output/checkpoints/
 # Run training script (with data copied to node)
-srun python src/model_training.py --dataset-path "$WORK/MMF-Proj/images/CASIA2/CASIA2.0_revised" --workdir "$TMPDIR" # add training parameters
+srun python src/model_training.py --dataset-path "$WORK/MMF-Proj/images/CASIA2/CASIA2.0_revised" --workdir "$TMPDIR" --version 2 --epochs 1 # add training parameters
 # Create a directory on $HOME and copy the results from our training
 mkdir ${WORK}/$SLURM_JOB_ID
 cp -r ./output/. ${WORK}/$SLURM_JOB_ID
