@@ -61,29 +61,30 @@ class Compressor:
         """
         Takes image and returns its latent representation and quantized latent representation
         """
-        if type(img) is np.ndarray:
-            img = img_to_torch(img)
-        elif type(img) is torch.Tensor and len(img.size()) == 3:
-            img = img.unsqueeze(0)
+        with torch.no_grad():
+            if type(img) is np.ndarray:
+                img = img_to_torch(img)
+            elif type(img) is torch.Tensor and len(img.size()) == 3:
+                img = img.unsqueeze(0)
 
-        h, w = img.shape[-2:]
-        pad, unpad = compute_padding(in_h=h, in_w=w, min_div=2 ** 6)
+            h, w = img.shape[-2:]
+            pad, unpad = compute_padding(in_h=h, in_w=w, min_div=2 ** 6)
 
-        padded_img = F.pad(input=img, pad=pad, mode="constant", value=0)
+            padded_img = F.pad(input=img, pad=pad, mode="constant", value=0)
 
-        padded_img = padded_img.to(device)
-        model = model.to(device)
+            padded_img = padded_img.to(device)
+            model = model.to(device)
 
-        y = model.g_a(padded_img)  # latent space direkt nach Encoder
-        y_hat = model.gaussian_conditional.quantize(y, mode="dequantize")  # latent space nach Quantisierung
+            y = model.g_a(padded_img)  # latent space direkt nach Encoder
+            y_hat = model.gaussian_conditional.quantize(y, mode="dequantize")  # latent space nach Quantisierung
 
-        if detach:
-            y_hat = y_hat.squeeze(0).detach().cpu().numpy().copy()
-        else:
-            y = y.squeeze(0)
-            y_hat = y_hat.squeeze(0)
+            if detach:
+                y_hat = y_hat.squeeze(0).detach().cpu().numpy().copy()
+            else:
+                y = y.squeeze(0)
+                y_hat = y_hat.squeeze(0)
 
-        return y, y_hat
+            return y, y_hat
 
 
 def cheng2020_model(quality: int = 6):

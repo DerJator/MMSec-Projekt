@@ -19,6 +19,7 @@ class SiameseNetwork(nn.Module):
         self.class_layer = None
         if class_layer:
             self.class_layer = nn.Linear(64, 2)
+            self.softmax = nn.Softmax(dim=1)
 
     def forward_representation(self, x):
         x = self.pool(F.relu(self.conv1(x)))
@@ -32,11 +33,11 @@ class SiameseNetwork(nn.Module):
         return z
 
     def forward_classifier(self, z):
-        return self.class_layer(z)
+        return self.softmax(self.class_layer(z))
 
     def forward(self, input1, input2):
         y1, y2 = None, None
-
+        print(f"input1: {input1.size()}")
         z1 = self.forward_representation(input1)
         if self.class_layer:
             y1 = self.forward_classifier(z1)
@@ -82,7 +83,7 @@ class ESupConLoss(nn.Module):
         # labels: Tensor of shape (batch_size,)
         self.n = z_au.size(0)
         self.n_k = self.n  # In each sample pair, there is 1 of each class
-        print(fc_weights.size())
+        print(f"{fc_weights.size()}")
         pt = fc_weights[0], fc_weights[1]  # TODO: Normalization
 
         supcon_loss = 0
@@ -95,9 +96,8 @@ class ESupConLoss(nn.Module):
                         (self.pt_loss(z_au, z_tp, pt)
                          + supcon_loss))
 
-        print(esupcon_loss)
-        print(esupcon_loss.size())  # TODO: Needs to be scalar, is a Tensor atm
-        return esupcon_loss
+        # print(f"{esupcon_loss.size()=}")  # TODO: Needs to be scalar, is a Tensor atm
+        return torch.sum(esupcon_loss)
 
     def pt_loss(self, z_au: torch.Tensor, z_tp: torch.Tensor, pts: tuple):
         """

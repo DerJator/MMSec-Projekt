@@ -64,11 +64,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
 
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
+            print(f"Saving model at epoch {epoch + 1}")
             torch.save(model.state_dict(), f'../models/model_{epoch}.pth')
 
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, device=torch.device("cpu"), log_interval=1):
-
 
     for epoch in range(num_epochs):
         train_loss = 0.0
@@ -90,15 +90,20 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             if isinstance(criterion, models.ContrastiveLoss):
                 diff_label = torch.Tensor([(0 if label1[i] == label2[i] else 1) for i in range(len(label1))]).to(device)
                 loss = criterion(z_au.to(device), z_tp.to(device), diff_label)
+                print("Contrastive")
+                print(loss)
             elif isinstance(criterion, models.ESupConLoss):
                 prototypes = model.get_weights_class_layer()
                 loss = criterion(z_au.to(device), z_tp.to(device), prototypes.cuda())
+                del z_au, y_au, z_tp, y_tp, img1, img2, label1, label2, prototypes
+                print("ESupCon")
+                print(loss)
             else:
                 raise ValueError('Unsupported criterion')
             loss.backward()
             optimizer.step()
 
-            train_loss += loss.item()
+            train_loss += float(loss)
 
         """ VALIDATION LOOP """
         model.eval()
@@ -118,7 +123,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
                 else:
                     raise ValueError('Unsupported criterion')
 
-                val_loss += loss.item()
+                val_loss += float(loss)
 
         epoch_train_loss = train_loss / len(train_loader.dataset)
         epoch_val_loss = val_loss / len(val_loader.dataset)
@@ -147,24 +152,33 @@ def evaluate_model(model, test_loader):
     # print(f'Test Loss: {avg_loss:.4f}')
 
 
-def get_representations(model, data_loaders):
-    # Collect representations of training data (including validation data)
+def get_representations(model, data_loaders, as_torch=True):
+    # Collect representations of data (including validation data)
     representations = []
     labels = []
 
     for data_loader in data_loaders:
         for img1, img2, labels in data_loader:
-            print(labels)
+            print(f"{labels=}")
             label1, label2 = labels[0].cpu(), labels[1].cpu()
-            print(label1, label2)
-            representations.append(model.forward_representation(img1).cpu().detach().numpy())
-            representations.append(model.forward_representation(img2).cpu().detach().numpy())
+            print(f"{label1=}, {label2=}")
+            if as_torch:
+                representations.append(model.forward_representation(img1).cpu().detach())
+                representations.append(model.forward_representation(img2).cpu().detach())
+            else:
+                representations.append(model.forward_representation(img1).cpu().detach().numpy())
+                representations.append(model.forward_representation(img2).cpu().detach().numpy())
+
             labels.extend([label1, label2])
 
-    representations = np.concatenate(representations, axis=0)
+    # representations = np.concatenate(representations, axis=0)
     labels = np.concatenate(labels, axis=0)
 
     return representations, labels
+
+
+def print_memory_summary():
+    print(torch.cuda.memory_summary())
 
 
 if __name__ == '__main__':
@@ -227,9 +241,10 @@ if __name__ == '__main__':
     val_data = models.ImagePairsDataset(val_pairs, val_labels, transform)
     test_data = models.ImagePairsDataset(test_pairs, test_labels, transform)
 
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+    test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
+
 
     """ Put images through AI Coder """
     compressor = cmp.Compressor(cmp.CModelName.CHENG2020, device=DEVICE)
@@ -265,6 +280,8 @@ if __name__ == '__main__':
     """ EVALUATION """
     torch.cuda.empty_cache()
     test_representations, test_labels = get_representations(trained_model, [test_cmp_loader])
+    # print(test_representations)
+    # print(type(test_representations))
 
     if MODEL_VERSION == 1:
         trained_model.eval()
@@ -287,11 +304,19 @@ if __name__ == '__main__':
     elif MODEL_VERSION == 2:
         trained_model.eval()
 
+        test_labels = []
         predictions = []
-        for img in test_representations:
-            predictions.append(trained_model.classify_sample(img))
+        for img1, img2, labels in test_cmp_loader:
+            for img in [img1, img2]:
+                probs = trained_model.classify_sample(img.to(DEVICE)).cpu()
+                label = torch.argmax(probs, dim=1)
+                predictions.extend(label.tolist())
+            test_labels.extend(labels[0].cpu().tolist())
+            test_labels.extend(labels[1].cpu().tolist())
 
         # Calculate the accuracy
+        print(predictions)
+        print(test_labels)
         accuracy = accuracy_score(test_labels, predictions)
         print(f"ESupCon Accuracy: {accuracy * 100:.2f}%")
         wandb.log({"ESupCon Accuracy": accuracy})
