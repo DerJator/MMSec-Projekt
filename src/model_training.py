@@ -2,9 +2,13 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
+
 import Casia2
 import models
+import losses
 import first_compressions as cmp
+import helpers
+
 import argparse
 import wandb
 import random
@@ -15,45 +19,66 @@ from sklearn.pipeline import make_pipeline
 from sklearn.metrics import accuracy_score
 
 
+def calc_loss(loss_func, z_au, z_tp, label_pair: tuple = None, nn_model=None, device=torch.device('cuda')):
+    label1, label2 = label_pair
+
+    if isinstance(loss_func, losses.ContrastiveLoss):
+        diff_label = torch.Tensor([(0 if label1[i] == label2[i] else 1) for i in range(len(label1))]).to(device)
+        loss = loss_func(z_au.to(device), z_tp.to(device), diff_label)
+        print(f"Contrastive {loss=}")
+
+    elif isinstance(loss_func, losses.ESupConLoss):
+        prototypes = nn_model.get_weights_class_layer()
+        loss = loss_func(z_au.to(device), z_tp.to(device), prototypes.to(device))
+        del prototypes
+        print(f"ESupCon {loss=}")
+    else:
+        raise ValueError('Unsupported criterion')
+
+    del label1, label2
+
+    return loss
+
+
 def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, device=torch.device("cpu"), log_interval=1):
+
     for epoch in range(num_epochs):
         train_loss = 0.0
         val_loss = 0.0
 
         """ TRAINING LOOP """
         model.train()
-
         for img1, img2, label in train_loader:
+            label1, label2 = label[0].to(device), label[1].to(device)
             # print(img1[0].size(), img1[1].size(), label)
-            img1, img2, label = img1.to(device), img2.to(device), label.to(device)
+            img1, img2 = img1.to(device), img2.to(device)
 
             optimizer.zero_grad()
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
 
             z_au, y_au, z_tp, y_tp = model(img1, img2)
-            if isinstance(criterion, models.ContrastiveLoss):
-                diff_label = 0 if label[0] == label[1] else 1
-                loss = criterion(z_au, z_tp, diff_label)
-            elif isinstance(criterion, models.ESupConLoss):
-                prototypes = model.get_weights_class_layer()
-                loss = criterion(z_au, z_tp, prototypes.cpu())
-            else:
-                raise ValueError('Unsupported criterion')
+
+            loss = calc_loss(criterion, z_au, z_tp, label_pair=(label1, label2), nn_model=model)
             loss.backward()
             optimizer.step()
 
-            train_loss += loss.item()
+            del z_au, y_au, z_tp, y_tp, img1, img2
+
+            train_loss += float(loss)  # Tensor with grad (memory!) -> float
 
         """ VALIDATION LOOP """
-        best_val_loss = float("inf")
         model.eval()
+        best_val_loss = float("inf")
         with torch.no_grad():
             for img1, img2, label in val_loader:
-                img1, img2, label = img1.to(device), img2.to(device), label.to(device)
-                z_au, z_tp = model(img1, img2)
-                loss = criterion(z_au, z_tp, label)
+                label1, label2 = label[0].to(device), label[1].to(device)
+                img1, img2 = img1.to(device), img2.to(device)
 
-                val_loss += loss.item()
+                z_au, y_au, z_tp, y_tp = model(img1, img2)
+                loss = calc_loss(criterion, z_au, z_tp, label_pair=(label1, label2), nn_model=model)
+                del z_au, y_au, z_tp, y_tp, img1, img2
+
+                val_loss += float(loss)
 
         epoch_train_loss = train_loss / len(train_loader.dataset)
         epoch_val_loss = val_loss / len(val_loader.dataset)
@@ -67,72 +92,10 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             print(f"Saving model at epoch {epoch + 1}")
             torch.save(model.state_dict(), f'../models/model_{epoch}.pth')
 
-
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, device=torch.device("cpu"), log_interval=1):
-
-    for epoch in range(num_epochs):
-        train_loss = 0.0
-        val_loss = 0.0
-
-        """ TRAINING LOOP """
-        model.train()
-
-        for img1, img2, label in train_loader:
-            label1, label2 = label[0].to(device), label[1].to(device)
-            # print(img1[0].size(), img1[1].size(), label)
-            img1, img2 = img1.to(device), img2.to(device)
-
-            optimizer.zero_grad()
-            torch.cuda.empty_cache()
-
-            z_au, y_au, z_tp, y_tp = model(img1, img2)
-
-            if isinstance(criterion, models.ContrastiveLoss):
-                diff_label = torch.Tensor([(0 if label1[i] == label2[i] else 1) for i in range(len(label1))]).to(device)
-                loss = criterion(z_au.to(device), z_tp.to(device), diff_label)
-                print("Contrastive")
-                print(loss)
-            elif isinstance(criterion, models.ESupConLoss):
-                prototypes = model.get_weights_class_layer()
-                loss = criterion(z_au.to(device), z_tp.to(device), prototypes.cuda())
-                del z_au, y_au, z_tp, y_tp, img1, img2, label1, label2, prototypes
-                print("ESupCon")
-                print(loss)
-            else:
-                raise ValueError('Unsupported criterion')
-            loss.backward()
-            optimizer.step()
-
-            train_loss += float(loss)
-
-        """ VALIDATION LOOP """
-        model.eval()
-        with torch.no_grad():
-            for img1, img2, label in val_loader:
-                label1, label2 = label[0].to(device), label[1].to(device)
-
-                img1, img2 = img1.to(device), img2.to(device)
-                z_au, y_au, z_tp, y_tp = model(img1, img2)
-                if isinstance(criterion, models.ContrastiveLoss):
-                    diff_label = torch.Tensor([(0 if label1[i] == label2[i] else 1) for i in range(len(label1))]).to(
-                        device)
-                    loss = criterion(z_au.to(device), z_tp.to(device), diff_label)
-                elif isinstance(criterion, models.ESupConLoss):
-                    prototypes = model.get_weights_class_layer()
-                    loss = criterion(z_au.to(device), z_tp.to(device), prototypes.cuda())
-                else:
-                    raise ValueError('Unsupported criterion')
-
-                val_loss += float(loss)
-
-        epoch_train_loss = train_loss / len(train_loader.dataset)
-        epoch_val_loss = val_loss / len(val_loader.dataset)
-
-        if epoch % log_interval == 0:
-            run.log({"train-loss": epoch_train_loss, "val-loss": epoch_val_loss})  # Max 1x pro epoch (bei mehreren Sachen z.B. dict füllen)
-        print(f'Epoch {epoch + 1}/{num_epochs} \t| Train Loss: {epoch_train_loss:.4f} \t| Val Loss: {epoch_val_loss:.4f}')
-
     print("Training is completed!")
+    print(f"Saving last model at epoch {epoch + 1}")
+    torch.save(model.state_dict(), f'../models/model_{epoch}.pth')
+
     return model
 
 
@@ -232,14 +195,14 @@ if __name__ == '__main__':
 
     """ Transforms """
     transform = transforms.Compose([
-        transforms.ToTensor(),
+        transforms.ToTensor()
         # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     """ Package in Dataset and DataLoader """
-    train_data = models.ImagePairsDataset(train_pairs, train_labels, transform)
-    val_data = models.ImagePairsDataset(val_pairs, val_labels, transform)
-    test_data = models.ImagePairsDataset(test_pairs, test_labels, transform)
+    train_data = helpers.ImagePairsDataset(train_pairs, train_labels, transform)
+    val_data = helpers.ImagePairsDataset(val_pairs, val_labels, transform)
+    test_data = helpers.ImagePairsDataset(test_pairs, test_labels, transform)
 
     train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
     val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
@@ -256,11 +219,11 @@ if __name__ == '__main__':
 
     if MODEL_VERSION == 1:
         model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=False).to(DEVICE)
-        loss_fun = models.ContrastiveLoss()
+        loss_fun = losses.ContrastiveLoss()
         optimizer = optim.Adam(model.parameters(), lr=0.001)
     elif MODEL_VERSION == 2:
         model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=True).to(DEVICE)
-        loss_fun = models.ESupConLoss()
+        loss_fun = losses.ESupConLoss()
         optimizer = optim.Adam(model.parameters(), lr=0.001)
     else:
         raise ValueError('Unsupported model version')
@@ -270,7 +233,6 @@ if __name__ == '__main__':
     run = wandb.init(project=proj_name)
     # save model inputs and model parameters
     config = run.config
-    config.dropout = 0.01
     # Log gradients
     run.watch(model)
 

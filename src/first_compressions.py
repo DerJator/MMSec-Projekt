@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from compressai.ops import compute_padding
 from compressai.models import CompressionModel
 from torch.utils.data import DataLoader, Dataset
+import helpers
 import os
 import regex as re
 from enum import Enum
@@ -52,9 +53,15 @@ class Compressor:
         return compress_latent(img, self.model, self.device, self.detach)
 
     def compress_torch(self, data: DataLoader) -> DataLoader:
-        transform = lambda img: self.compress_latent(img, self.model, self.device, detach=False)
-        transformed_dataset = CompressedDataset(data.dataset, transform)
+        def combined_transform(img):
+            img = self.compress_latent(img, self.model, self.device, detach=False)
+            img = helpers.min_max_scale(img)
+
+            return img
+        
+        transformed_dataset = CompressedDataset(data.dataset, combined_transform)
         transformed_dataloader = DataLoader(transformed_dataset, batch_size=data.batch_size, shuffle=False)
+
         return transformed_dataloader
 
     def compress_latent(self, img: np.ndarray | torch.Tensor, model: CompressionModel, device: torch.device, detach: bool = True):
