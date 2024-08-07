@@ -33,7 +33,7 @@ class SiameseNetwork(nn.Module):
 
     def forward(self, input1, input2):
         y1, y2 = None, None
-        print(f"input1: {input1.size()}")
+        # print(f"input1: {input1.size()}")
         z1 = self.forward_representation(input1)
         if self.class_layer:
             y1 = self.forward_classifier(z1)

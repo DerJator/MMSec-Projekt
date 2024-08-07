@@ -1,7 +1,9 @@
 from torch import min as torch_min, max as torch_max
 import numpy as np
 from torch.utils.data import Dataset
+from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
+import os
 
 
 def min_max_scale(img_pair: tuple):
@@ -33,3 +35,18 @@ class ImagePairsDataset(Dataset):
             img2 = self.transform(img2)
 
         return img1, img2, label
+
+
+def tensorboard_vis(representations, labels, n_epochs):
+    # Directory to save the TensorBoard logs
+    log_dir = './tensorboard_logs'
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Initialize the TensorBoard SummaryWriter
+    writer = SummaryWriter(log_dir)
+
+    # Add embeddings and metadata to TensorBoard
+    writer.add_embedding(representations, metadata=labels, tag=f'Contrastive_v1_e{n_epochs}')
+
+    # Close the writer
+    writer.close()

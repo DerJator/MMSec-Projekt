@@ -4,19 +4,24 @@ import torch.nn.functional as F
 
 
 class ContrastiveLoss(nn.Module):
-    def __init__(self, margin=1.0, pos_factor=0.5):
+    def __init__(self, margin=1.0, pos_factor=0.5, reg_weight=0.1):
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
         self.pos_factor = pos_factor
+        self.reg_weight = reg_weight
 
     def forward(self, output1, output2, diff_label):
         """
             diff_label: 1 if au-tp sample 0 if samples from same class
         """
         euclidean_distance = F.pairwise_distance(output1, output2)
-        loss_contrastive = torch.mean(-diff_label * torch.pow(euclidean_distance, 2) +
-                                      self.pos_factor * (1 - diff_label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
-        return loss_contrastive
+        neg_loss = diff_label * torch.pow(euclidean_distance, 2)
+        pos_loss = (1 - diff_label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2)
+        reg_term = torch.mean(torch.abs(1 - torch.norm(output1, p=2, dim=1))) + torch.mean(torch.abs(1 - torch.norm(output2, p=2, dim=1)))
+        # print(f"{reg_term=}")
+        loss_contrastive = -pos_loss + self.pos_factor * neg_loss + self.reg_weight * reg_term
+
+        return torch.mean(loss_contrastive)
 
 
 class ESupConLoss(nn.Module):
@@ -46,7 +51,7 @@ class ESupConLoss(nn.Module):
                          + supcon_loss))
 
         # print(f"{esupcon_loss.size()=}")  # TODO: Needs to be scalar, is a Tensor atm
-        return torch.sum(esupcon_loss)
+        return torch.mean(esupcon_loss)
 
     def pt_loss(self, z_au: torch.Tensor, z_tp: torch.Tensor, pts: tuple):
         """
