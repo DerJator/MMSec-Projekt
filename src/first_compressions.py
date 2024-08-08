@@ -37,12 +37,13 @@ class CompressedDataset(Dataset):
             return comp1[1], comp2[1], label
 
 class Compressor:
-    def __init__(self, model_name: CModelName, device: torch.device):
+    def __init__(self, model_name: CModelName, device: torch.device, channels: list):
         if model_name == CModelName.CHENG2020:
             self.model = cheng2020_model()
         else:
             raise RuntimeError(f"Unknown model name: {model_name}")
 
+        self.channels = channels
         self.device = device
         if device == torch.device("cpu"):
             self.detach = True
@@ -91,7 +92,9 @@ class Compressor:
                 y = y.squeeze(0)
                 y_hat = y_hat.squeeze(0)
 
-            return y, y_hat
+            print(f"{y.size()=}")
+            print(f"{y_hat.size()=}")
+            return y[self.channels], y_hat[self.channels]
 
 
 def cheng2020_model(quality: int = 6):

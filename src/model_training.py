@@ -178,6 +178,7 @@ if __name__ == '__main__':
     parser.add_argument('--version', type=int, default=2, help='Version of the model (atm 1 or 2)')
     parser.add_argument('--epochs', type=int, default=5, help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch Size')
+    parser.add_argument('--channel_selection', type=bool, default=True, help='Whether to use channel selection')
 
     # Parse the arguments
     args = parser.parse_args()
@@ -188,60 +189,30 @@ if __name__ == '__main__':
     MODEL_VERSION = args.version
     print(f"{DATA_PATH=}\n{WORKDIR=}\n{MODEL_VERSION=}")
 
-    N_CHANNELS = 192
     N_EPOCHS = args.epochs
     DEVICE = torch.device("cuda")
     BATCH_SIZE = args.batch_size
+    if args.channel_selection:
+        SELECTED_CHANNELS = [4, 29, 37, 39, 47, 49, 52, 55, 65, 85, 100, 101, 102, 110, 125, 131,  151, 179, 185]
+        N_CHANNELS = len(SELECTED_CHANNELS)
+    else:
+        N_CHANNELS = 192
+        SELECTED_CHANNELS = [i for i in range(N_CHANNELS)]
+
     # DEVICE = torch.device("cpu")
 
     """ Initialize Dataset """
-    casia_data = Casia2.Casia2Dataset(DATA_PATH, channels=[i for i in range(N_CHANNELS)])
-    if MODEL_VERSION == 1:
-        casia_data.organize_output_pairs(mode="neg_pos")  # Also add positive pairs for contrastive loss
-    elif MODEL_VERSION == 2:
-        casia_data.organize_output_pairs(mode="neg")
-
-    # print(casia_data.output_pairs)
-    train_pairs, test_pairs, train_labels, test_labels = casia_data.train_test_split(test=0.15)
-
-    train_size = int(0.8235 * len(train_pairs))  # 0.8235 * 85% is 70% of the original data
-    val_size = len(train_pairs) - train_size  # Remaining 15% of the original data
-
-    all_indices = list(range(len(train_pairs)))
-    random.shuffle(all_indices)
-    train_ix = all_indices[:train_size]
-    val_ix = all_indices[train_size:]
-
-    val_pairs = [train_pairs[i] for i in val_ix]
-    train_pairs = [train_pairs[i] for i in train_ix]
-    val_labels = [train_labels[i] for i in val_ix]
-    train_labels = [train_labels[i] for i in train_ix]
-    print(f"TRAIN SIZE: {len(train_pairs)}, VAL SIZE: {len(val_pairs)}, TEST SIZE: {len(test_pairs)}")
-
-    """ Transforms """
-    transform = transforms.Compose([
-        transforms.ToTensor()
-        # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    """ Package in Dataset and DataLoader """
-    train_data = helpers.ImagePairsDataset(train_pairs, train_labels, transform)
-    val_data = helpers.ImagePairsDataset(val_pairs, val_labels, transform)
-    test_data = helpers.ImagePairsDataset(test_pairs, test_labels, transform)
-
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
-    test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
-
+    train_loader, val_loader, test_loader = helpers.init_dataset(DATA_PATH, SELECTED_CHANNELS, MODEL_VERSION, BATCH_SIZE)
 
     """ Put images through AI Coder """
-    compressor = cmp.Compressor(cmp.CModelName.CHENG2020, device=DEVICE)
+    compressor = cmp.Compressor(cmp.CModelName.CHENG2020, device=DEVICE, channels=SELECTED_CHANNELS)
     train_cmp_loader = compressor.compress_torch(train_loader)
     val_cmp_loader = compressor.compress_torch(val_loader)
     test_cmp_loader = compressor.compress_torch(test_loader)
 
     """ FIRST PART: Train all Au-Tp pairs and the same number of Au-Au / Tp-Tp pairs """
 
+    model_name = f'./models/model{MODEL_VERSION}_ch{N_CHANNELS}_ep{N_EPOCHS}.pth'
     if MODEL_VERSION == 1:
         model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=False).to(DEVICE)
         loss_fun = losses.ContrastiveLoss()
@@ -262,13 +233,13 @@ if __name__ == '__main__':
     run.watch(model)
 
     """ TRAINING """
-    if not os.path.exists(f'./models/model{MODEL_VERSION}_ep{N_EPOCHS}.pth'):
+    if not os.path.exists(model_name):
         trained_model = train_model(model, train_cmp_loader, val_cmp_loader, loss_fun, optimizer,
                                     model_version=MODEL_VERSION, device=DEVICE, num_epochs=N_EPOCHS)
     else:
         print("Found existing model, take that")
         trained_model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=(MODEL_VERSION == 2)).to(DEVICE)
-        trained_model.load_state_dict(torch.load(f'./models/model{MODEL_VERSION}_ep{N_EPOCHS}.pth'))
+        trained_model.load_state_dict(torch.load(model_name))
 
     """ EVALUATION """
     torch.cuda.empty_cache()
@@ -284,7 +255,6 @@ if __name__ == '__main__':
     if MODEL_VERSION == 1:
         trained_model.eval()
         train_representations, train_class = get_representations(trained_model, [train_cmp_loader, val_cmp_loader], as_torch=False)
-
         svm_classification(train_representations, train_class, test_representations, test_labels)
 
     elif MODEL_VERSION == 2:
