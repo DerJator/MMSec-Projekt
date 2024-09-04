@@ -83,7 +83,8 @@ def init_dataset(DATA_PATH, SELECTED_CHANNELS, MODEL_VERSION, BATCH_SIZE):
 
     """ Transforms """
     transform = transforms.Compose([
-        transforms.ToTensor()
+        transforms.ToTensor(),
+        HighPassFilter(kernel_size=5, sigma=0.1),
         # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
@@ -97,3 +98,13 @@ def init_dataset(DATA_PATH, SELECTED_CHANNELS, MODEL_VERSION, BATCH_SIZE):
     test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, pin_memory=True)
 
     return train_loader, val_loader, test_loader
+
+
+class HighPassFilter:
+    def __init__(self, kernel_size=5, sigma=1.0):
+        self.gaussian_blur = transforms.GaussianBlur(kernel_size=kernel_size, sigma=sigma)
+
+    def __call__(self, img):
+        lp_img = self.gaussian_blur(img)  # Apply Gaussian blur to get the LP version
+        hp_img = img - lp_img             # Subtract LP from original to get HP version
+        return hp_img

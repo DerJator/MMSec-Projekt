@@ -10,16 +10,23 @@ class ContrastiveLoss(nn.Module):
         self.pos_factor = pos_factor
         self.reg_weight = reg_weight
 
-    def forward(self, output1, output2, diff_label):
+    def forward(self, output1, output2, diff_label, metric="cosine"):
         """
             diff_label: 1 if au-tp sample 0 if samples from same class
         """
-        euclidean_distance = F.pairwise_distance(output1, output2)
-        neg_loss = diff_label * torch.pow(euclidean_distance, 2)
-        pos_loss = (1 - diff_label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2)
+        if metric == "euclidian":
+            dist = F.pairwise_distance(output1, output2)  # vllt margin 1 zu wenig bei euclidian?
+            dist_swap = 1
+        elif metric == "cosine":
+            dist = F.cosine_similarity(output1, output2, dim=1)
+            dist_swap = -1
+        else:
+            raise NotImplementedError("Choose 'euclidian' or 'cosine'")
+        pos_loss = (1 - diff_label) * dist_swap * torch.pow(dist, 2)
+        neg_loss = diff_label * torch.pow(torch.clamp(dist_swap * (self.margin - dist), min=0.0), 2)
         reg_term = torch.mean(torch.abs(1 - torch.norm(output1, p=2, dim=1))) + torch.mean(torch.abs(1 - torch.norm(output2, p=2, dim=1)))
         # print(f"{reg_term=}")
-        loss_contrastive = -pos_loss + self.pos_factor * neg_loss + self.reg_weight * reg_term
+        loss_contrastive = pos_loss + self.pos_factor * neg_loss + self.reg_weight * reg_term
 
         return torch.mean(loss_contrastive)
 

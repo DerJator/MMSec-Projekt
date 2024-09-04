@@ -19,6 +19,7 @@ from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import accuracy_score
+import pickle
 
 
 def calc_loss(loss_func, z_au, z_tp, label_pair: tuple = None, nn_model=None, device=torch.device('cuda')):
@@ -135,9 +136,12 @@ def get_representations(model, data_loaders, as_torch=True):
             # print(f"{repr_tensor.size()=}")
 
             for label_tensor in labels:
+                print(f"{label_tensor=}")
                 all_labels.extend(label_tensor.cpu().tolist())
 
     # representations = np.concatenate(representations, axis=0)
+    torch.save(repr_tensor, f'../models/representations.pt')
+    torch.save(all_labels, f'../models/all_labels.pt')
     if not as_torch:
         repr_tensor = repr_tensor.numpy()
         all_labels = np.array(all_labels)
@@ -192,6 +196,8 @@ if __name__ == '__main__':
     N_EPOCHS = args.epochs
     DEVICE = torch.device("cuda")
     BATCH_SIZE = args.batch_size
+    REPR_DIM = 128
+
     if args.channel_selection:
         SELECTED_CHANNELS = [4, 29, 37, 39, 47, 49, 52, 55, 65, 85, 100, 101, 102, 110, 125, 131,  151, 179, 185]
         N_CHANNELS = len(SELECTED_CHANNELS)
@@ -212,13 +218,14 @@ if __name__ == '__main__':
 
     """ FIRST PART: Train all Au-Tp pairs and the same number of Au-Au / Tp-Tp pairs """
 
-    model_name = f'./models/model{MODEL_VERSION}_ch{N_CHANNELS}_ep{N_EPOCHS}.pth'
+    model_tag = f"model{MODEL_VERSION}_ch{N_CHANNELS}_ep{N_EPOCHS}"
+    model_name = f'./models/{model_tag}.pth'
     if MODEL_VERSION == 1:
-        model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=False).to(DEVICE)
+        model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=False, repr_dim=REPR_DIM).to(DEVICE)
         loss_fun = losses.ContrastiveLoss()
         optimizer = optim.Adam(model.parameters(), lr=0.001)
     elif MODEL_VERSION == 2:
-        model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=True).to(DEVICE)
+        model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=True, repr_dim=REPR_DIM).to(DEVICE)
         loss_fun = losses.ESupConLoss()
         optimizer = optim.Adam(model.parameters(), lr=0.001)
     else:
@@ -227,23 +234,25 @@ if __name__ == '__main__':
     # init wandb
     proj_name = "Contrastive" if MODEL_VERSION == 1 else "ESupCon"
     run = wandb.init(project=proj_name)
-    # save model inputs and model parameters
-    config = run.config
-    # Log gradients
-    run.watch(model)
+    config = run.config  # save model inputs and model parameters
+    run.watch(model)  # Log gradients
 
-    """ TRAINING """
+    """____________TRAINING____________"""
     if not os.path.exists(model_name):
         trained_model = train_model(model, train_cmp_loader, val_cmp_loader, loss_fun, optimizer,
                                     model_version=MODEL_VERSION, device=DEVICE, num_epochs=N_EPOCHS)
     else:
-        print("Found existing model, take that")
+        print(f"Found existing model {model_name}, take that")
         trained_model = models.SiameseNetwork(in_channels=N_CHANNELS, class_layer=(MODEL_VERSION == 2)).to(DEVICE)
         trained_model.load_state_dict(torch.load(model_name))
 
-    """ EVALUATION """
+    """____________EVALUATION____________"""
     torch.cuda.empty_cache()
     test_representations, test_labels = get_representations(trained_model, [test_cmp_loader], as_torch=False)  #!
+    print("Saving Test Representations...")
+    with open(f"./output/test_repr-{model_tag}.p", "wb") as test_file:
+        pickle.dump((test_representations, test_labels), test_file)
+
     print(f"{type(test_representations)=}")
     print(f"{type(test_labels)=}")
     print(test_representations[0])
@@ -255,6 +264,9 @@ if __name__ == '__main__':
     if MODEL_VERSION == 1:
         trained_model.eval()
         train_representations, train_class = get_representations(trained_model, [train_cmp_loader, val_cmp_loader], as_torch=False)
+        print("Saving Train Representations...")
+        with open(f"./output/train_repr-{model_tag}.p", "wb") as train_file:
+            pickle.dump((train_representations, train_class), train_file)
         svm_classification(train_representations, train_class, test_representations, test_labels)
 
     elif MODEL_VERSION == 2:

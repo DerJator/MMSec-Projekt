@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 
 class SiameseNetwork(nn.Module):
-    def __init__(self, in_channels: int, class_layer: bool):
+    def __init__(self, in_channels: int, class_layer: bool, repr_dim: int = 64):
         super(SiameseNetwork, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
@@ -11,10 +11,10 @@ class SiameseNetwork(nn.Module):
         self.pool = nn.MaxPool2d(2, 2)
         self.fc1 = nn.Linear(1536, 256)
         self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(128, repr_dim)
         self.class_layer = None
         if class_layer:
-            self.class_layer = nn.Linear(64, 2)
+            self.class_layer = nn.Linear(repr_dim, 2)
             self.softmax = nn.Softmax(dim=1)
 
     def forward_representation(self, x):

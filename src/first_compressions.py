@@ -92,8 +92,6 @@ class Compressor:
                 y = y.squeeze(0)
                 y_hat = y_hat.squeeze(0)
 
-            print(f"{y.size()=}")
-            print(f"{y_hat.size()=}")
             return y[self.channels], y_hat[self.channels]
 
 
