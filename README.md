@@ -1,3 +1,11 @@
+# Project "Detection of manipulated images from the latent space of AI-compressed images"
+
+In this project, I tried several approaches to classify manipulated from the latent space of an AI codec.
+I implemented a training/test pipeline and trained several classic (VGG-based, ResNet, ...) or advanced (Siamese Networks, Contrastive Loss, SupCon Loss, ...) models.
+This experience sharpened my understanding of training and testing custom deep learning models and the quirks of good data selection or hyperparameter optimization.
+
+The following is a tutorial provided by FAU on how to use the provided cluster.
+
 # Usage of the NHR/RRZE HPC Cluster
 ## Introduction
 Authors: Katharina Breininger, Jonas Utz
